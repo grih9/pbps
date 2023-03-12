@@ -11,7 +11,7 @@ char * PUBLIC_DIR;
 int main(int c, char **v) {
   char *port = c <= 1 ? "8000" : v[1];
   PUBLIC_DIR = c <= 2 ? "./webroot": v[2];
-  serve_forever(port);
+  serve_forever(port, PUBLIC_DIR);
   return 0;
 }
 
@@ -55,6 +55,7 @@ void route() {
     } else {
       printf("Hello! You are using %s\n\n", request_header("User-Agent"));
     }
+    return;
   }
 
   GET("/test") {
@@ -67,6 +68,7 @@ void route() {
       printf("%s: %s\n", h->name, h->value);
       h++;
     }
+    return;
   }
 
   POST("/") {
@@ -75,6 +77,7 @@ void route() {
     printf("Fetch the data using `payload` variable.\n");
     if (payload_size > 0)
       printf("Request body: %s", payload);
+    return;
   }
 
   GET(uri) {
@@ -86,10 +89,10 @@ void route() {
       read_file(file_name);
     } else {
       HTTP_404;
-      sprintf(file_name, "%s%s", PUBLIC_DIR, NOT_FOUND_HTML);
       if (file_exists(file_name))
         read_file(file_name);
     }
+    return;
   }
 
   ROUTE_END()

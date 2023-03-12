@@ -3,10 +3,12 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <netdb.h>
+#include <time.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -27,19 +29,19 @@ char *method, // "GET" or "POST"
     *uri,     // "/index.html" things before '?'
     *qs,      // "a=1&b=2" things after  '?'
     *prot,    // "HTTP/1.1"
-    *payload; // for POST
+    *payload, // for POST
+    *logMessage;
 
 int payload_size;
+struct sockaddr_in clientaddr;
+FILE * logFile;
 
-void serve_forever(const char *PORT) {
-  struct sockaddr_in clientaddr;
+void serve_forever(const char *PORT, const char *ROOT) {
   socklen_t addrlen;
-
   int slot = 0;
 
-  printf("Server started %shttp://127.0.0.1:%s%s\n", "\033[92m", PORT,
-         "\033[0m");
-
+  logMessage = malloc(1024);
+  logFile = fopen("var/log/picofoxweb/log.txt", "w");
   // create shared memory for client slot array
   clients = mmap(NULL, sizeof(*clients) * MAX_CONNECTIONS,
                  PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
@@ -50,6 +52,8 @@ void serve_forever(const char *PORT) {
     clients[i] = -1;
   start_server(PORT);
 
+  sprintf(logMessage, "Server started %shttp://127.0.0.1:%s%s with root directory as %s%s%s\n", "\033[92m", PORT, "\033[0m", "\033[92m", ROOT, "\033[0m");
+  syslog(LOG_INFO, "%s", logMessage);
   // Ignore SIGCHLD to avoid zombie threads
   signal(SIGCHLD, SIG_IGN);
 
@@ -76,6 +80,7 @@ void serve_forever(const char *PORT) {
     while (clients[slot] != -1)
       slot = (slot + 1) % MAX_CONNECTIONS;
   }
+  fclose(logFile);
 }
 
 // start server
@@ -178,7 +183,15 @@ void respond(int slot) {
 
     uri_unescape(uri);
 
-    fprintf(stderr, "\x1b[32m + [%s] %s\x1b[0m\n", method, uri);
+    char * clientIP = inet_ntoa(clientaddr.sin_addr);
+    time_t rawTime;
+    struct tm * timeInfo;
+    char date[30];
+    time(&rawTime);
+    timeInfo = localtime(&rawTime);
+    strftime(date, 30, "%d/%b/%Y:%H:%M:%S %z", timeInfo);
+
+    sprintf(logMessage, "%s - - [%s] \"%s %s %s\"", clientIP, date, method, uri, prot);
 
     qs = strchr(uri, '?');
 
@@ -203,7 +216,6 @@ void respond(int slot) {
       h->name = key;
       h->value = val;
       h++;
-      fprintf(stderr, "[H] %s: %s\n", key, val);
       t = val + 1 + strlen(val);
       if (t[1] == '\r' && t[2] == '\n')
         break;
@@ -217,9 +229,13 @@ void respond(int slot) {
     int clientfd = clients[slot];
     dup2(clientfd, STDOUT_FILENO);
     close(clientfd);
+    sprintf(logMessage, "%s %d %d [%s] \"%s %s %s\"", clientIP, clientfd, clientfd, date, method, uri, prot);
 
     // call router
     route();
+    sprintf(logMessage, "%s %d", logMessage, payload_size);
+    fprintf(logFile, "%s\n", logMessage);
+    //syslog(LOG_INFO, "%s", logMessage);
 
     // tidy up
     fflush(stdout);
